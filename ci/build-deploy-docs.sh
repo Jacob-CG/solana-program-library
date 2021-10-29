@@ -4,18 +4,20 @@ set -e -x
 
 cwd=$(pwd)
 
+npm install --global yarn
+
 cd ${cwd}/token/js
-npm install
-npm run docs
+yarn
+yarn run docs
 
 cd ${cwd}/token-lending/js
-npm install
-npm run docs
+yarn install --pure-lockfile
+yarn run docs
 
 cd ${cwd}/stake-pool/js
-npm install
-npm run docs
+yarn
+yarn run docs
 
 cd ${cwd}/token-swap/js
-npm install
-npm run docs
+yarn
+yarn run docs
