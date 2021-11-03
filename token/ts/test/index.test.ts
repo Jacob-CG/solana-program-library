@@ -1,16 +1,17 @@
-import { Keypair, PublicKey } from '@solana/web3.js';
+import {Connection, Keypair, LAMPORTS_PER_SOL, PublicKey} from '@solana/web3.js';
 import chai, { expect } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
 import {
-    ASSOCIATED_TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID, burn,
     createAssociatedTokenAccountInstruction,
-    createInitializeMintInstruction,
+    createInitializeMintInstruction, createMint,
     createSyncNativeInstruction,
-    createTransferCheckedInstruction,
-    getAssociatedTokenAddress,
+    createTransferCheckedInstruction, getAccountInfo,
+    getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount, mintTo,
     TOKEN_PROGRAM_ID,
-    TokenOwnerOffCurveError,
+    TokenOwnerOffCurveError, transfer, transferChecked,
 } from '../src';
+import {toBigIntLE} from "bigint-buffer";
 
 chai.use(chaiAsPromised);
 
@@ -79,3 +80,216 @@ describe('state', () => {
         );
     });
 });
+
+describe('live-test', () => {
+    const connection = new Connection(
+        'http://127.0.0.1:8899',
+        'confirmed'
+    );
+
+    const payer = Keypair.generate();
+    const fromWallet = Keypair.generate();
+    const toWallet  = Keypair.generate();
+    const freezeAuthority = Keypair.generate();
+    const mintAuthority = Keypair.generate();
+
+    before(async () => {
+        const airdropSignature = await connection.requestAirdrop(
+            payer.publicKey,
+            LAMPORTS_PER_SOL,
+        );
+        return connection.confirmTransaction(airdropSignature);
+    })
+
+    it('transfer', async () => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        const toTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            toWallet.publicKey
+        );
+
+        await mintTo(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            mintAuthority,
+            [],
+            1000000000
+        );
+
+        const toTokenAccountInfoPreTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPreTransfer.amount).to.eql(BigInt(0));
+
+        await transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1000000000
+        );
+
+        const toTokenAccountInfoPostTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPostTransfer.amount).to.eql(BigInt(1000000000));
+
+        await expect(transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1000000000
+        )).to.be.rejected;
+    });
+
+    it('transferChecked', async () => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        const toTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            toWallet.publicKey
+        );
+
+        await mintTo(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            mintAuthority,
+            [],
+            1000000000
+        );
+
+        const toTokenAccountInfoPreTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPreTransfer.amount).to.eql(BigInt(0));
+
+        await transferChecked(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1,
+            9
+        );
+
+        const toTokenAccountInfoPostTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPostTransfer.amount).to.eql(BigInt(1));
+
+        await expect(transferChecked(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1000000000,
+            9
+        )).to.be.rejected;
+    })
+
+    it('burn', async () => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        await mintTo(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            mintAuthority,
+            [],
+            1000000000
+        );
+
+        const fromTokenAccountInfoPreBurn = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        )
+
+        expect(fromTokenAccountInfoPreBurn.amount).to.eql(BigInt(1000000000));
+
+        await burn(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            fromWallet,
+            [],
+            1
+        )
+
+        const fromTokenAccountInfoPostBurn = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        )
+
+        expect(fromTokenAccountInfoPostBurn.amount).to.eql(BigInt(999999999));
+
+    })
+})
