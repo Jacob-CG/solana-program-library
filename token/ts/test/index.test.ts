@@ -2,16 +2,18 @@ import {Connection, Keypair, LAMPORTS_PER_SOL, PublicKey} from '@solana/web3.js'
 import chai, { expect } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
 import {
-    ASSOCIATED_TOKEN_PROGRAM_ID, burn,
+    approve, approveChecked,
+    ASSOCIATED_TOKEN_PROGRAM_ID, burn, burnChecked, closeAccount,
     createAssociatedTokenAccountInstruction,
     createInitializeMintInstruction, createMint,
     createSyncNativeInstruction,
-    createTransferCheckedInstruction, getAccountInfo,
-    getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount, mintTo,
+    createTransferCheckedInstruction, freezeAccount, getAccountInfo,
+    getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount, mintTo, revoke, thawAccount,
     TOKEN_PROGRAM_ID,
     TokenOwnerOffCurveError, transfer, transferChecked,
 } from '../src';
 import {toBigIntLE} from "bigint-buffer";
+import {bigInt} from "@solana/buffer-layout-utils";
 
 chai.use(chaiAsPromised);
 
@@ -167,79 +169,38 @@ describe('live-test', () => {
             [],
             1000000000
         )).to.be.rejected;
-    });
-
-    it('transferChecked', async () => {
-        const mint = await createMint(
-            connection,
-            payer,
-            mintAuthority.publicKey,
-            freezeAuthority.publicKey,
-            9
-        )
-
-        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
-            connection,
-            payer,
-            mint,
-            fromWallet.publicKey
-        );
-
-        const toTokenAccount = await getOrCreateAssociatedTokenAccount(
-            connection,
-            payer,
-            mint,
-            toWallet.publicKey
-        );
-
-        await mintTo(
-            connection,
-            payer,
-            mint,
-            fromTokenAccount.address,
-            mintAuthority,
-            [],
-            1000000000
-        );
-
-        const toTokenAccountInfoPreTransfer = await getAccountInfo(
-            connection,
-            toTokenAccount.address
-        )
-
-        expect(toTokenAccountInfoPreTransfer.amount).to.eql(BigInt(0));
 
         await transferChecked(
             connection,
             payer,
-            fromTokenAccount.address,
-            mint,
             toTokenAccount.address,
-            fromWallet,
+            mint,
+            fromTokenAccount.address,
+            toWallet,
             [],
             1,
             9
         );
 
-        const toTokenAccountInfoPostTransfer = await getAccountInfo(
+        const fromTokenAccountInfoPostTransferChecked = await getAccountInfo(
             connection,
-            toTokenAccount.address
+            fromTokenAccount.address
         )
 
-        expect(toTokenAccountInfoPostTransfer.amount).to.eql(BigInt(1));
+        expect(fromTokenAccountInfoPostTransferChecked.amount).to.eql(BigInt(1));
 
         await expect(transferChecked(
             connection,
             payer,
-            fromTokenAccount.address,
-            mint,
             toTokenAccount.address,
-            fromWallet,
+            mint,
+            fromTokenAccount.address,
+            toWallet,
             [],
             1000000000,
             9
         )).to.be.rejected;
-    })
+    });
 
     it('burn', async () => {
         const mint = await createMint(
@@ -291,5 +252,311 @@ describe('live-test', () => {
 
         expect(fromTokenAccountInfoPostBurn.amount).to.eql(BigInt(999999999));
 
+        await expect(burn(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            fromWallet,
+            [],
+            1000000000
+        )).to.be.rejected;
+
+        await burnChecked(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            fromWallet,
+            [],
+            1,
+            9
+        )
+
+        const fromTokenAccountInfoPostBurnChecked = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        )
+
+        expect(fromTokenAccountInfoPostBurnChecked.amount).to.eql(BigInt(999999998));
+
+        await expect(burnChecked(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            fromWallet,
+            [],
+            1000000000,
+            9
+        )).to.be.rejected;
+    })
+
+    it('freeze', async () => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        const toTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            toWallet.publicKey
+        );
+
+        await mintTo(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            mintAuthority,
+            [],
+            1000000000
+        );
+
+        const fromTokenAccountInfo = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        )
+
+        expect(fromTokenAccountInfo.amount).to.eql(BigInt(1000000000));
+
+        await freezeAccount(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            freezeAuthority,
+            []
+        )
+
+        await expect(transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1000000000)
+        ).to.be.rejected;
+
+        await thawAccount(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            mint,
+            freezeAuthority,
+            []
+        )
+
+        await transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            fromWallet,
+            [],
+            1000000000
+        )
+
+        const toTokenAccountInfoPostTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPostTransfer.amount).to.eql(BigInt(1000000000));
+    })
+
+    it('approvalLifecycle', async() => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        const toTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            toWallet.publicKey
+        );
+
+        await mintTo(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            mintAuthority,
+            [],
+            1000000000
+        );
+
+        const fromTokenAccountInfo = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        )
+
+        expect(fromTokenAccountInfo.amount).to.eql(BigInt(1000000000));
+
+        await approve(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toWallet.publicKey,
+            fromWallet,
+            [],
+            100
+        )
+
+        const toTokenAccountInfoPreTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPreTransfer.amount).to.eql(BigInt(0));
+
+        // ToWallet can transfer from the fromAccount because it is approved
+        await transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            toWallet,
+            [],
+            100
+        )
+
+        const toTokenAccountInfoPostTransfer = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfoPostTransfer.amount).to.eql(BigInt(100));
+
+        // Attempting to move more than you are approved for will fail
+        await expect(transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            toWallet,
+            [],
+            100
+        )).to.be.rejected;
+
+        await approveChecked(
+            connection,
+            payer,
+            mint,
+            fromTokenAccount.address,
+            toWallet.publicKey,
+            fromWallet,
+            [],
+            1000,
+            9
+        )
+
+        await transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            toWallet,
+            [],
+            100
+        )
+
+        const toTokenAccountInfo = await getAccountInfo(
+            connection,
+            toTokenAccount.address
+        )
+
+        expect(toTokenAccountInfo.amount).to.eql(BigInt(200));
+
+        await revoke(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            fromWallet,
+            []
+        )
+
+        // Won't be able to transfer after the account has revoked access
+        await expect(transfer(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            toTokenAccount.address,
+            toWallet,
+            [],
+            100
+        )).to.be.rejected;
+    })
+
+    it('accountLifecycle', async () => {
+        const mint = await createMint(
+            connection,
+            payer,
+            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
+            9
+        )
+
+        const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            payer,
+            mint,
+            fromWallet.publicKey
+        );
+
+        const fromAccount = await getAccountInfo(
+            connection,
+            fromTokenAccount.address
+        );
+        expect(fromAccount.mint.toBase58()).to.eql(mint.toBase58());
+        expect(fromAccount.owner.toBase58()).to.eql(fromWallet.publicKey.toBase58());
+
+        const associatedTokenAddress = await getAssociatedTokenAddress(
+            mint,
+            fromWallet.publicKey
+        )
+
+        expect(associatedTokenAddress.toBase58()).to.eql(fromTokenAccount.address.toBase58());
+
+        await closeAccount(
+            connection,
+            payer,
+            fromTokenAccount.address,
+            payer.publicKey,
+            fromWallet,
+            []
+        )
+
+        await expect(
+            getAccountInfo(
+                connection,
+                fromTokenAccount.address
+            )
+        ).to.be.rejected;
     })
 })
